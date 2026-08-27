@@ -479,7 +479,13 @@
     </div>
   </div>
 
-  <p class="foot-note">
+
+  <div class="panel" style="margin-top:20px;">
+    <p class="panel-title">Movimento no Eduardo Gomes <span id="airport-count" style="color:var(--text-muted); font-weight:400;"></span></p>
+    <div class="flight-list" id="airport-list">
+      <div class="empty-state">Inicie o monitor para acompanhar o aeroporto.</div>
+    </div>
+  </div>  <p class="foot-note">
     Dados ao vivo via <a href="https://opensky-network.org" target="_blank" rel="noopener">OpenSky Network</a> (ADS-B colaborativo, gratuito).
     A previsão de chegada assume rota reta a partir da velocidade e do rumo atuais — é menos precisa para aviões em curva, decolando ou pousando.
     Os dados são consultados por uma conexão segura do próprio site, sem expor chaves ou armazenar sua localização.
@@ -511,6 +517,8 @@
     scopeRange: document.getElementById('scope-range'),
     flightList: document.getElementById('flight-list'),
     countBadge: document.getElementById('count-badge'),
+    airportList: document.getElementById('airport-list'),
+    airportCount: document.getElementById('airport-count'),
     demoBadge: document.getElementById('demo-badge'),
     alertBanner: document.getElementById('alert-banner'),
     alertText: document.getElementById('alert-text'),
@@ -537,7 +545,8 @@
   let demoMode = false;
   let pollTimer = null;
   let tickTimer = null;
-  let candidatos = []; // { icao24, callsign, origin, altKm, speedKmh, distAtualKm, distMinKm, etaAbsoluteMs }
+  let candidatos = []; // aviões que passarão perto do usuário
+  let movimentosSBEG = []; // movimento detectado no Eduardo Gomes
   let alreadyAlertedUrgent = new Set();
   let audioCtx = null;
   let deviceHeadingDeg = null;
@@ -885,6 +894,29 @@
     return out.sort((a, b) => a.etaAbsoluteMs - b.etaAbsoluteMs);
   }
 
+  function processAirportStates(states) {
+    const now = Date.now(), out = [];
+    for (const s of states) {
+      const [icao24, callsignRaw, origin, , , lon, lat, altBaro, onGround, velocity, trueTrack, verticalRate] = s;
+      if (lat == null || lon == null) continue;
+      const [x, y] = kmRelativos(lat, lon, SBEG.lat, SBEG.lon);
+      const distAirportKm = Math.hypot(x, y);
+      if (distAirportKm > 40) continue;
+      let status = null, etaAirportMs = null;
+      if (onGround && distAirportKm <= 4.5) status = 'no solo em SBEG';
+      else if (!onGround && velocity && trueTrack != null) {
+        const chegada = preverAproximacao(x, y, velocity, trueTrack);
+        const saida = preverAproximacao(x, y, velocity, (trueTrack + 180) % 360);
+        if (chegada && chegada.tMin >= 0 && chegada.tMin <= 15 && chegada.distMin <= 3.5 && (verticalRate == null || verticalRate <= 3)) {
+          status = 'chegando em SBEG'; etaAirportMs = now + chegada.tMin * 60000;
+        } else if (saida && saida.tMin >= 0 && saida.tMin <= 12 && saida.distMin <= 3.5 && (verticalRate == null || verticalRate >= -3)) status = 'saindo de SBEG';
+      }
+      if (!status) continue;
+      out.push({ icao24, callsign: (callsignRaw || '').trim() || 'sem identificação', origin: origin || '—', status, distAirportKm, etaAirportMs, altKm: altBaro ? altBaro / 1000 : null, speedKmh: velocity ? velocity * 3.6 : null, verticalRate });
+    }
+    const order = { 'chegando em SBEG': 0, 'saindo de SBEG': 1, 'no solo em SBEG': 2 };
+    return out.sort((a, b) => (order[a.status] - order[b.status]) || ((a.etaAirportMs || Infinity) - (b.etaAirportMs || Infinity)));
+  }
   // ---------- demo data ----------
   function gerarDemo() {
     const now = Date.now();
@@ -917,6 +949,7 @@
     try {
       const states = await fetchOpenSky();
       candidatos = processStates(states);
+      movimentosSBEG = processAirportStates(states);
       demoMode = false;
       els.demoBadge.style.display = 'none';
       els.statusText.textContent = 'monitorando';
@@ -925,10 +958,12 @@
       lastError = e.message;
       els.demoBadge.style.display = 'none';
       candidatos = [];
+      movimentosSBEG = [];
       els.statusText.textContent = 'erro na API';
     }
     renderScope();
     renderList();
+    renderAirportList();
   }
 
   // ---------- rendering: list ----------
@@ -981,6 +1016,22 @@
     });
   }
 
+  function renderAirportList() {
+    if (!movimentosSBEG.length) {
+      els.airportCount.textContent = '';
+      els.airportList.innerHTML = '<div class="empty-state">Nenhum pouso, decolagem ou aeronave no solo detectado agora.</div>';
+      return;
+    }
+    els.airportCount.textContent = `(${movimentosSBEG.length})`;
+    els.airportList.innerHTML = '';
+    movimentosSBEG.forEach((flight) => {
+      const card = document.createElement('div');
+      card.className = 'flight-card' + (flight.status === 'chegando em SBEG' ? ' urgent' : '');
+      const eta = flight.etaAirportMs ? `<div><div class="fc-eta">${fmtEta(flight.etaAirportMs)}</div><div class="fc-eta-label">até SBEG</div></div>` : '<div></div>';
+      card.innerHTML = `<div><span class="fc-callsign">${escapeHtml(flight.callsign)}</span><span class="fc-origin">${escapeHtml(flight.origin)}</span></div>${eta}<div class="airport-tag">✈ ${flight.status}</div><div class="fc-meta"><span>do aeroporto <b>${flight.distAirportKm.toFixed(1)} km</b></span>${flight.altKm ? `<span>alt. <b>${flight.altKm.toFixed(1)} km</b></span>` : ''}${flight.speedKmh ? `<span><b>${flight.speedKmh.toFixed(0)} km/h</b></span>` : ''}${flight.verticalRate != null ? `<span>${flight.verticalRate > 1 ? 'subindo' : flight.verticalRate < -1 ? 'descendo' : 'nivelado'}</span>` : ''}</div>`;
+      els.airportList.appendChild(card);
+    });
+  }
   function escapeHtml(value) {
     const div = document.createElement('div'); div.textContent = String(value); return div.innerHTML;
   }
