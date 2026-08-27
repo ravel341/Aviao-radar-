@@ -382,6 +382,10 @@
   .compass-cardinal-sm { fill: var(--text-muted); font-family: var(--font-mono); font-size: 9px; text-anchor: middle; }
   .compass-needle { transition: transform 0.25s ease-out; transform-origin: 100px 100px; }
   .compass-needle-shape { fill: var(--phosphor); filter: drop-shadow(0 0 4px rgba(77,255,160,0.6)); }
+  .compass-north-needle { transition: transform 0.25s ease-out; transform-origin: 100px 100px; }
+  .compass-north-shape { fill: var(--critical); filter: drop-shadow(0 0 5px rgba(255,107,74,0.75)); }
+  .compass-legend { display:flex; gap:14px; margin-top:10px; font-size:11px; color:var(--text-muted); }
+  .legend-north { color:var(--critical); } .legend-target { color:var(--phosphor); }
   .compass-needle.on-target .compass-needle-shape { fill: var(--amber); filter: drop-shadow(0 0 8px rgba(255,176,32,0.8)); }
   .compass-center { fill: var(--text-primary); }
 
@@ -452,6 +456,7 @@
         <div id="compass-target-name" class="compass-target-name">sem alvo no momento</div>
         <div id="compass-hint" class="compass-hint">gire o corpo até a seta apontar para cima da tela</div>
         <button class="icon-btn" id="btn-compass-target" type="button">✈ Apontar para avião</button>
+        <div class="compass-legend"><span class="legend-north">▲ Norte</span><span class="legend-target">▲ Aeroporto/avião</span></div>
         <div class="compass-numbers">
           <span>rumo do celular: <b id="compass-heading-val">—</b></span>
           <span>direção do avião: <b id="compass-target-val">—</b></span>
@@ -656,6 +661,14 @@
       svg.appendChild(t);
     });
 
+    const northGroup = document.createElementNS(SVG_NS_C, 'g');
+    northGroup.setAttribute('class', 'compass-north-needle');
+    northGroup.setAttribute('id', 'compass-north-needle');
+    const northNeedle = document.createElementNS(SVG_NS_C, 'path');
+    northNeedle.setAttribute('d', 'M100,38 L106,92 L100,84 L94,92 Z');
+    northNeedle.setAttribute('class', 'compass-north-shape');
+    northGroup.appendChild(northNeedle);
+    svg.appendChild(northGroup);
     const needleGroup = document.createElementNS(SVG_NS_C, 'g');
     needleGroup.setAttribute('class', 'compass-needle');
     needleGroup.setAttribute('id', 'compass-needle');
@@ -679,8 +692,12 @@
   function updateCompassUI() {
     if (!compassActive) return;
     const needleGroup = document.getElementById('compass-needle');
-    if (!needleGroup) return;
-    if (deviceHeadingDeg != null) els.compassHeadingVal.textContent = `${Math.round(deviceHeadingDeg)}°`;
+    const northGroup = document.getElementById('compass-north-needle');
+    if (!needleGroup || !northGroup) return;
+    if (deviceHeadingDeg != null) {
+      els.compassHeadingVal.textContent = `${Math.round(deviceHeadingDeg)}°`;
+      northGroup.setAttribute('transform', `rotate(${-deviceHeadingDeg} 100 100)`);
+    }
     let targetDeg;
     if (compassTargetMode === 'airport') {
       if (!Number.isFinite(config.lat) || !Number.isFinite(config.lon)) {
