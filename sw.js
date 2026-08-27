@@ -1,4 +1,4 @@
-const CACHE_NAME = 'radar-aviao-v2';
+const CACHE_NAME = 'radar-aviao-v3';
 const ASSETS = [
   './',
   './index.html',

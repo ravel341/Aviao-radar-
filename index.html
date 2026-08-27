@@ -668,7 +668,6 @@
     northNeedle.setAttribute('d', 'M100,38 L106,92 L100,84 L94,92 Z');
     northNeedle.setAttribute('class', 'compass-north-shape');
     northGroup.appendChild(northNeedle);
-    svg.appendChild(northGroup);
     const needleGroup = document.createElementNS(SVG_NS_C, 'g');
     needleGroup.setAttribute('class', 'compass-needle');
     needleGroup.setAttribute('id', 'compass-needle');
@@ -677,6 +676,7 @@
     needle.setAttribute('class', 'compass-needle-shape');
     needleGroup.appendChild(needle);
     svg.appendChild(needleGroup);
+    svg.appendChild(northGroup);
 
     const center = document.createElementNS(SVG_NS_C, 'circle');
     center.setAttribute('cx', cx); center.setAttribute('cy', cy); center.setAttribute('r', 4);
@@ -1197,7 +1197,7 @@
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(() => {
+      navigator.serviceWorker.register('sw.js').then((registration) => registration.update()).catch(() => {
         // silencioso: alguns hospedeiros/protocolos (file://) não suportam service worker
       });
     });
