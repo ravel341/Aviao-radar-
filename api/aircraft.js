@@ -3,7 +3,7 @@ const ADSBFI_URL = 'https://opendata.adsb.fi/api/v3/lat';
 const ADSBLOL_URL = 'https://api.adsb.lol/v2/point';
 function stateFromAdsb(a, now) {
   const number = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
-  return [a.hex || '', a.flight || a.r || '', a.ownOp || '—', now, now, number(a.lon), number(a.lat), number(a.alt_baro) === null ? null : number(a.alt_baro) * 0.3048, a.alt_baro === 'ground', number(a.gs) === null ? null : number(a.gs) * 0.514444, number(a.track), null, null, number(a.alt_geom) === null ? null : number(a.alt_geom) * 0.3048, a.squawk || null, false, 0];
+  return [a.hex || '', a.flight || a.r || '', a.ownOp || '—', now, now, number(a.lon), number(a.lat), number(a.alt_baro) === null ? null : number(a.alt_baro) * 0.3048, a.alt_baro === 'ground', number(a.gs) === null ? null : number(a.gs) * 0.514444, number(a.track), number(a.baro_rate) === null ? null : number(a.baro_rate) * 0.00508, null, number(a.alt_geom) === null ? null : number(a.alt_geom) * 0.3048, a.squawk || null, false, 0];
 }
 function area(req) {
   const keys = ['lamin', 'lomin', 'lamax', 'lomax'];

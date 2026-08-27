@@ -275,6 +275,7 @@
     margin-top: 2px;
   }
   .fc-meta span b { color: var(--text-primary); font-weight: 500; }
+  .airport-tag { grid-column: 1 / -1; color: var(--amber); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
 
   .empty-state {
     text-align: center;
@@ -739,19 +740,26 @@
   });
 
   els.btnApply.addEventListener('click', () => {
-    config.lat = parseFloat(els.inLat.value);
-    config.lon = parseFloat(els.inLon.value);
-    config.raioAlertaKm = parseFloat(els.inAlerta.value);
-    config.janelaMin = parseFloat(els.inJanela.value);
-    config.intervaloS = parseFloat(els.inIntervalo.value);
-    if (!Number.isFinite(config.lat) || config.lat < -90 || config.lat > 90 || !Number.isFinite(config.lon) || config.lon < -180 || config.lon > 180) {
-      alert('Latitude ou longitude inválida.');
-      return;
+    const next = {
+      ...config,
+      lat: parseFloat(els.inLat.value), lon: parseFloat(els.inLon.value),
+      raioAlertaKm: parseFloat(els.inAlerta.value), janelaMin: parseFloat(els.inJanela.value),
+      intervaloS: parseFloat(els.inIntervalo.value),
+    };
+    if (!Number.isFinite(next.lat) || next.lat < -90 || next.lat > 90 || !Number.isFinite(next.lon) || next.lon < -180 || next.lon > 180) {
+      alert('Latitude ou longitude inválida.'); return;
     }
-    config.intervaloS = Math.max(15, Number.isFinite(config.intervaloS) ? config.intervaloS : 60);
+    next.raioAlertaKm = Math.max(1, Number.isFinite(next.raioAlertaKm) ? next.raioAlertaKm : 8);
+    next.janelaMin = Math.max(1, Number.isFinite(next.janelaMin) ? next.janelaMin : 15);
+    next.intervaloS = Math.max(15, Number.isFinite(next.intervaloS) ? next.intervaloS : 60);
+    config = next;
     localStorage.setItem('radar-config', JSON.stringify(config));
     els.scopeRange.textContent = `${config.raioBuscaKm} km`;
-    if (running) { stop(); start(); }
+    const wasRunning = running;
+    if (wasRunning) { stop(); start(); }
+    const original = els.btnApply.textContent;
+    els.btnApply.textContent = '✓ Aplicado';
+    setTimeout(() => { els.btnApply.textContent = original; }, 1800);
   });
 
   // ---------- start/stop ----------
@@ -784,6 +792,8 @@
   // ---------- direção cardinal ----------
   const COMPASS_ABBR = ['N', 'NE', 'L', 'SE', 'S', 'SO', 'O', 'NO'];
   const COMPASS_NOME = { N: 'Norte', NE: 'Nordeste', L: 'Leste', SE: 'Sudeste', S: 'Sul', SO: 'Sudoeste', O: 'Oeste', NO: 'Noroeste' };
+  // ARP oficial SBEG: 03°02'28"S 060°03'02"W. Pista 11/29.
+  const SBEG = { lat: -3.041111, lon: -60.050556, nome: 'Eduardo Gomes' };
 
   function degToCompass(deg) {
     const norm = ((deg % 360) + 360) % 360;
@@ -816,8 +826,14 @@
   // ---------- fetch real data ----------
   async function fetchOpenSky() {
     const dLat = config.raioBuscaKm / 111.0;
-    const dLon = config.raioBuscaKm / (111.0 * Math.cos(config.lat * Math.PI / 180));
-    const params = new URLSearchParams({ lamin: config.lat - dLat, lomin: config.lon - dLon, lamax: config.lat + dLat, lomax: config.lon + dLon });
+    const dLonUser = config.raioBuscaKm / (111.0 * Math.cos(config.lat * Math.PI / 180));
+    const dLonAirport = config.raioBuscaKm / (111.0 * Math.cos(SBEG.lat * Math.PI / 180));
+    const params = new URLSearchParams({
+      lamin: Math.min(config.lat - dLat, SBEG.lat - dLat),
+      lomin: Math.min(config.lon - dLonUser, SBEG.lon - dLonAirport),
+      lamax: Math.max(config.lat + dLat, SBEG.lat + dLat),
+      lomax: Math.max(config.lon + dLonUser, SBEG.lon + dLonAirport),
+    });
     const res = await fetch(`/api/aircraft?${params}`, { cache: 'no-store' });
     if (!res.ok) {
       let detail = '';
@@ -832,13 +848,23 @@
     const now = Date.now();
     const out = [];
     for (const s of states) {
-      const [icao24, callsignRaw, origin, , , lon, lat, altBaro, onGround, velocity, trueTrack] = s;
+      const [icao24, callsignRaw, origin, , , lon, lat, altBaro, onGround, velocity, trueTrack, verticalRate] = s;
       if (lat == null || lon == null || onGround) continue;
       const [x0, y0] = kmRelativos(lat, lon, config.lat, config.lon);
       const distAtual = Math.hypot(x0, y0);
       const prev = preverAproximacao(x0, y0, velocity, trueTrack);
       if (!prev) continue;
       const { tMin, distMin } = prev;
+      const [airportX, airportY] = kmRelativos(lat, lon, SBEG.lat, SBEG.lon);
+      const distAirportKm = Math.hypot(airportX, airportY);
+      const chegada = preverAproximacao(airportX, airportY, velocity, trueTrack);
+      const saida = preverAproximacao(airportX, airportY, velocity, (trueTrack + 180) % 360);
+      let airportStatus = null;
+      if (distAirportKm <= 40 && chegada && chegada.tMin >= 0 && chegada.tMin <= 15 && chegada.distMin <= 3.5 && (verticalRate == null || verticalRate <= 3)) {
+        airportStatus = 'chegando em SBEG';
+      } else if (distAirportKm <= 40 && saida && saida.tMin >= 0 && saida.tMin <= 12 && saida.distMin <= 3.5 && (verticalRate == null || verticalRate >= -3)) {
+        airportStatus = 'saindo de SBEG';
+      }
       if (tMin >= 0 && tMin <= config.janelaMin && distMin <= config.raioAlertaKm) {
         out.push({
           icao24,
@@ -851,6 +877,8 @@
           etaAbsoluteMs: now + tMin * 60000,
           bearingDeg: Math.atan2(x0, y0) * 180 / Math.PI,
           rangeKm: distAtual,
+          airportStatus,
+          distAirportKm,
         });
       }
     }
@@ -934,6 +962,7 @@
           <div class="fc-eta">${fmtEta(c.etaAbsoluteMs)}</div>
           <div class="fc-eta-label">ETA</div>
         </div>
+        ${c.airportStatus ? `<div class="airport-tag">✈ ${c.airportStatus} · trajetória passa perto de você</div>` : ''}
         <div class="fc-meta">
           <span>olhe para <b>${dirAbbr}</b> <span style="opacity:.7">(${dirNome})</span></span>
           <span>a <b>${c.distAtualKm.toFixed(1)} km</b> agora</span>
