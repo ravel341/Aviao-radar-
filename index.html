@@ -451,6 +451,7 @@
       <div class="compass-info">
         <div id="compass-target-name" class="compass-target-name">sem alvo no momento</div>
         <div id="compass-hint" class="compass-hint">gire o corpo até a seta apontar para cima da tela</div>
+        <button class="icon-btn" id="btn-compass-target" type="button">✈ Apontar para avião</button>
         <div class="compass-numbers">
           <span>rumo do celular: <b id="compass-heading-val">—</b></span>
           <span>direção do avião: <b id="compass-target-val">—</b></span>
@@ -523,6 +524,7 @@
     alertBanner: document.getElementById('alert-banner'),
     alertText: document.getElementById('alert-text'),
     btnCompass: document.getElementById('btn-compass'),
+    btnCompassTarget: document.getElementById('btn-compass-target'),
     compassPanel: document.getElementById('compass-panel'),
     compassDial: document.getElementById('compass-dial'),
     compassStatus: document.getElementById('compass-status'),
@@ -551,6 +553,7 @@
   let audioCtx = null;
   let deviceHeadingDeg = null;
   let compassActive = false;
+  let compassTargetMode = 'airport';
   let lastError = null;
 
   try {
@@ -618,7 +621,12 @@
     buildCompassDial();
   });
 
-  function buildCompassDial() {
+
+  els.btnCompassTarget.addEventListener('click', () => {
+    compassTargetMode = compassTargetMode === 'airport' ? 'aircraft' : 'airport';
+    els.btnCompassTarget.textContent = compassTargetMode === 'airport' ? '✈ Apontar para avião' : '🛬 Apontar para aeroporto';
+    updateCompassUI();
+  });  function buildCompassDial() {
     const svg = els.compassDial;
     svg.innerHTML = '';
     const cx = 100, cy = 100, r = 92;
@@ -672,29 +680,32 @@
     if (!compassActive) return;
     const needleGroup = document.getElementById('compass-needle');
     if (!needleGroup) return;
-
-    if (deviceHeadingDeg != null) {
-      els.compassHeadingVal.textContent = `${Math.round(deviceHeadingDeg)}°`;
+    if (deviceHeadingDeg != null) els.compassHeadingVal.textContent = `${Math.round(deviceHeadingDeg)}°`;
+    let targetDeg;
+    if (compassTargetMode === 'airport') {
+      if (!Number.isFinite(config.lat) || !Number.isFinite(config.lon)) {
+        els.compassTargetName.textContent = 'aplique sua localização primeiro';
+        els.compassTargetVal.textContent = '—'; return;
+      }
+      const [x, y] = kmRelativos(SBEG.lat, SBEG.lon, config.lat, config.lon);
+      targetDeg = Math.atan2(x, y) * 180 / Math.PI;
+      const distance = Math.hypot(x, y), dirAbbr = degToCompass(targetDeg);
+      els.compassTargetName.textContent = `Aeroporto Eduardo Gomes — ${dirAbbr} (${COMPASS_NOME[dirAbbr]})`;
+      els.compassTargetVal.textContent = `${Math.round(((targetDeg % 360) + 360) % 360)}° · ${distance.toFixed(1)} km`;
+    } else {
+      if (!candidatos.length) {
+        els.compassTargetName.textContent = 'sem avião passando perto no momento';
+        els.compassTargetVal.textContent = '—'; needleGroup.classList.remove('on-target');
+        needleGroup.setAttribute('transform', 'rotate(0 100 100)'); return;
+      }
+      const alvo = candidatos[0];
+      targetDeg = alvo.bearingDeg || 0;
+      const dirAbbr = degToCompass(targetDeg);
+      els.compassTargetName.textContent = `${alvo.callsign} — ${dirAbbr} (${COMPASS_NOME[dirAbbr]}), em ${fmtEta(alvo.etaAbsoluteMs)}`;
+      els.compassTargetVal.textContent = `${Math.round(((targetDeg % 360) + 360) % 360)}°`;
     }
-
-    if (!candidatos.length) {
-      els.compassTargetName.textContent = 'sem alvo no momento';
-      els.compassTargetVal.textContent = '—';
-      needleGroup.classList.remove('on-target');
-      needleGroup.setAttribute('transform', 'rotate(0 100 100)');
-      return;
-    }
-
-    const alvo = candidatos[0];
-    const targetDeg = alvo.bearingDeg || 0;
-    const dirAbbr = degToCompass(targetDeg);
-    els.compassTargetName.textContent = `${alvo.callsign} — ${dirAbbr} (${COMPASS_NOME[dirAbbr]}), em ${fmtEta(alvo.etaAbsoluteMs)}`;
-    els.compassTargetVal.textContent = `${Math.round(((targetDeg % 360) + 360) % 360)}°`;
-
     if (deviceHeadingDeg == null) return;
-
-    let rel = targetDeg - deviceHeadingDeg;
-    rel = ((rel % 360) + 360) % 360;
+    let rel = ((targetDeg - deviceHeadingDeg) % 360 + 360) % 360;
     needleGroup.setAttribute('transform', `rotate(${rel} 100 100)`);
     needleGroup.classList.toggle('on-target', rel <= 8 || rel >= 352);
   }
