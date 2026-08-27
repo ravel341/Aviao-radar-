@@ -362,6 +362,7 @@
     line-height: 1.7;
   }
   .foot-note a { color: var(--phosphor-dim); }
+  .error-note { color: var(--critical); }
 
   .header-actions { display: flex; gap: 10px; align-items: center; }
 
@@ -480,8 +481,7 @@
   <p class="foot-note">
     Dados ao vivo via <a href="https://opensky-network.org" target="_blank" rel="noopener">OpenSky Network</a> (ADS-B colaborativo, gratuito).
     A previsão de chegada assume rota reta a partir da velocidade e do rumo atuais — é menos precisa para aviões em curva, decolando ou pousando.
-    Se o navegador não conseguir se conectar diretamente à API (bloqueio de CORS ou limite de requisições), esta página cai automaticamente em
-    <strong>modo demonstração</strong> com tráfego simulado, só para você ver como a interface funciona.
+    Os dados são consultados por uma conexão segura do próprio site, sem expor chaves ou armazenar sua localização.
     A bússola (🧭) só funciona em celular, com a página servida via <strong>HTTPS</strong> (ou dentro de um app empacotado) — em iPhone, o Safari vai pedir permissão explícita pra usar o sensor de orientação.
   </p>
 
@@ -541,6 +541,17 @@
   let audioCtx = null;
   let deviceHeadingDeg = null;
   let compassActive = false;
+  let lastError = null;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem('radar-config') || 'null');
+    if (saved && Number.isFinite(saved.lat) && Number.isFinite(saved.lon)) config = { ...config, ...saved };
+  } catch (_) {}
+  els.inLat.value = config.lat ?? '';
+  els.inLon.value = config.lon ?? '';
+  els.inAlerta.value = config.raioAlertaKm;
+  els.inJanela.value = config.janelaMin;
+  els.inIntervalo.value = config.intervaloS;
 
   // ---------- bússola do dispositivo ----------
   function handleOrientation(e) {
@@ -722,7 +733,8 @@
         els.inLat.value = pos.coords.latitude.toFixed(4);
         els.inLon.value = pos.coords.longitude.toFixed(4);
       },
-      () => alert('Não foi possível obter sua localização.')
+      (err) => alert(`Não foi possível obter sua localização: ${err.message}. Use localhost/HTTPS e permita o acesso, ou informe as coordenadas manualmente.`),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 }
     );
   });
 
@@ -732,6 +744,12 @@
     config.raioAlertaKm = parseFloat(els.inAlerta.value);
     config.janelaMin = parseFloat(els.inJanela.value);
     config.intervaloS = parseFloat(els.inIntervalo.value);
+    if (!Number.isFinite(config.lat) || config.lat < -90 || config.lat > 90 || !Number.isFinite(config.lon) || config.lon < -180 || config.lon > 180) {
+      alert('Latitude ou longitude inválida.');
+      return;
+    }
+    config.intervaloS = Math.max(15, Number.isFinite(config.intervaloS) ? config.intervaloS : 60);
+    localStorage.setItem('radar-config', JSON.stringify(config));
     els.scopeRange.textContent = `${config.raioBuscaKm} km`;
     if (running) { stop(); start(); }
   });
@@ -799,9 +817,13 @@
   async function fetchOpenSky() {
     const dLat = config.raioBuscaKm / 111.0;
     const dLon = config.raioBuscaKm / (111.0 * Math.cos(config.lat * Math.PI / 180));
-    const url = `https://opensky-network.org/api/states/all?lamin=${config.lat - dLat}&lomin=${config.lon - dLon}&lamax=${config.lat + dLat}&lomax=${config.lon + dLon}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const params = new URLSearchParams({ lamin: config.lat - dLat, lomin: config.lon - dLon, lamax: config.lat + dLat, lomax: config.lon + dLon });
+    const res = await fetch(`/api/aircraft?${params}`, { cache: 'no-store' });
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.json()).error || ''; } catch (_) {}
+      throw new Error(detail || `HTTP ${res.status}`);
+    }
     const data = await res.json();
     return data.states || [];
   }
@@ -871,10 +893,11 @@
       els.demoBadge.style.display = 'none';
       els.statusText.textContent = 'monitorando';
     } catch (e) {
-      demoMode = true;
-      els.demoBadge.style.display = 'inline-block';
-      candidatos = gerarDemo();
-      els.statusText.textContent = 'modo demonstração';
+      demoMode = false;
+      lastError = e.message;
+      els.demoBadge.style.display = 'none';
+      candidatos = [];
+      els.statusText.textContent = 'erro na API';
     }
     renderScope();
     renderList();
@@ -891,7 +914,8 @@
   function renderList() {
     updateCompassUI();
     if (!candidatos.length) {
-      els.flightList.innerHTML = `<div class="empty-state">Nenhum avião se aproximando no momento.<br>A próxima checagem é automática.</div>`;
+      const message = lastError ? `Não foi possível consultar os aviões.<br>${escapeHtml(lastError)}<br>Aguarde um pouco e tente novamente.` : 'Nenhum avião se aproximando no momento.<br>A próxima checagem é automática.';
+      els.flightList.innerHTML = `<div class="empty-state ${lastError ? 'error-note' : ''}">${message}</div>`;
       els.countBadge.textContent = '';
       return;
     }
@@ -926,6 +950,10 @@
         showBanner(`${c.callsign} — olhe para <b>${dirAbbr}</b> (${dirNome}), passa a ${c.distMinKm.toFixed(1)} km em ${fmtEta(c.etaAbsoluteMs)}`);
       }
     });
+  }
+
+  function escapeHtml(value) {
+    const div = document.createElement('div'); div.textContent = String(value); return div.innerHTML;
   }
 
   function showBanner(text) {
